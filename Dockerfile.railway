@@ -1,0 +1,37 @@
+# Railway build of this fork's API. Same as Dockerfile, except that all
+# persistent state lives on the volume mounted at /app/data and gunicorn
+# listens on IPv4 and IPv6 so the frontend can reach it over the private network.
+FROM ghcr.io/gramps-project/gramps-web-base:latest
+
+ENV GRAMPS_API_CONFIG=/app/config/config.cfg
+
+RUN mkdir -p /app/src /app/config /app/static /app/thumbnail_cache \
+    /app/cache/reports /app/cache/export /app/cache/request_cache \
+    /app/cache/persistent_cache /app/tmp /app/data \
+    && touch /app/config/config.cfg /app/static/index.html
+
+ENV GRAMPSWEB_USER_DB_URI=sqlite:////app/data/users.sqlite \
+    GRAMPSWEB_SEARCH_INDEX_DB_URI=sqlite:////app/data/search_index.db \
+    GRAMPSWEB_MEDIA_BASE_DIR=/app/data/media \
+    GRAMPS_DATABASE_PATH=/app/data/grampsdb \
+    GRAMPSWEB_STATIC_PATH=/app/static \
+    GRAMPSWEB_THUMBNAIL_CACHE_CONFIG__CACHE_DIR=/app/thumbnail_cache \
+    GRAMPSWEB_REQUEST_CACHE_CONFIG__CACHE_DIR=/app/cache/request_cache \
+    GRAMPSWEB_PERSISTENT_CACHE_CONFIG__CACHE_DIR=/app/cache/persistent_cache \
+    GRAMPSWEB_REPORT_DIR=/app/cache/reports \
+    GRAMPSWEB_EXPORT_DIR=/app/cache/export \
+    GRAMPSHOME=/root
+
+COPY . /app/src
+RUN pip install --no-cache-dir /app/src[ai,sentry]
+
+# download and cache YFull tree for yclade
+RUN python3 -c "import yclade; yclade.tree.download_yfull_tree()"
+
+EXPOSE 5000
+
+COPY docker-entrypoint.sh /
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD mkdir -p /app/data/media /app/data/grampsdb \
+    && exec gunicorn -w ${GUNICORN_NUM_WORKERS:-2} -b [::]:5000 gramps_webapi.wsgi:app \
+       --timeout ${GUNICORN_TIMEOUT:-120} --limit-request-line 8190 --preload
